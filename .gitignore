@@ -1,0 +1,6 @@
+.DS_Store
+__archive/
+__pycache__/
+dataset-copy/
+submission/
+models/
