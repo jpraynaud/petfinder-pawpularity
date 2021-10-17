@@ -4,6 +4,7 @@ import os
 import shutil
 from PIL import Image
 from IPython.display import display
+from datetime import datetime
 
 # TF log level
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' 
@@ -114,7 +115,7 @@ def prefix_file_name(file_name, total_prefix=0):
 def cut_suffix(cut_ratio):
     if cut_ratio == 1.0:
         return ""
-    return "-cut-"+ "%0.6f" % cut_ratio
+    return "-cut-"+ "%0.3f" % cut_ratio
 
 # Copy file
 def copy_file(file_src, file_dst):
@@ -287,7 +288,7 @@ def describe_training(history):
 
 # Get model name
 def get_model_name(parameters):
-    model_name = "%s" % (parameters["model_prefix"])
+    model_name = "%s-input-%s-dropout-%0.3f" % (parameters["model_prefix"], "x".join(map(str, parameters["input_shape"])), parameters["dropout_rate"])
     return model_name
     
 # Model file path load
@@ -315,11 +316,45 @@ def load_model(model, model_load_dir):
     model.load_weights(model_file)
     return model_file
 
+# Synchronize models
+def synchronize_models(model_load_dir, model_save_dir):
+    if model_load_dir != model_load_dir:
+        for root, dirs, files in os.walk(model_load_dir, topdown=True):
+            for file_name in files:
+                file_id, file_ext = os.path.splitext(file_name)
+                if file_ext in [".h5", ".csv"]:
+                    file_src_path = os.path.join(model_load_dir, file_name)
+                    file_dst_path = os.path.join(model_save_dir, file_name)
+                    print("Copied model %s from %s to %s" % (file_name, model_load_dir, model_save_dir))
+                    shutil.copy(file_src_path, file_dst_path)
+
 # Evaluate model
 def evaluate_model(model, test_dataset):
     if test_dataset.cardinality().numpy() > 0:
-        model.evaluate(test_dataset, verbose=1)
+        return model.evaluate(test_dataset, verbose=1)
+    return None
     
+# Record training/evaluate model
+def record_training_evaluate(model_name, model_file, model_parameters, history, evaluation, model_load_dir, model_save_dir, records_file):
+    records_file_path_load = os.path.join(model_load_dir, records_file)
+    records_file_path_save = os.path.join(model_save_dir, records_file)
+    if model_load_dir != model_save_dir and os.path.exists(records_file_path_load):
+        print("Copied records from %s" % records_file_path_load)
+        shutil.copy(records_file_path_load, records_file_path_save)
+    record_data = pd.DataFrame({}, columns=["model_name", "model_parameters", "iteration", "epochs", "epochs_sum", "steps", "train_rmse", "val_rmse", "test_rmse", "trained_at"])
+    if os.path.exists(records_file_path_save): record_data = pd.read_csv(records_file_path_save)
+    iteration_previous = 0
+    epochs_sum_previous = 0
+    record_data_row_previous = record_data[record_data["model_name"] == model_name][-1:]
+    if (len(record_data_row_previous) > 0):
+        iteration_previous = record_data_row_previous["iteration"].values[0]
+        epochs_sum_previous = record_data_row_previous["epochs_sum"].values[0]
+    record_data_row = pd.DataFrame([[model_name, model_parameters, iteration_previous+1, history.params["epochs"], epochs_sum_previous+history.params["epochs"], history.params["steps"], "%0.3f" % history.history["rmse"][-1:][0], "%0.3f" % history.history["val_rmse"][-1:][0], "%0.3f" % evaluation[-1:][0], datetime.now()]], columns=record_data.columns)
+    record_data = pd.concat([record_data, record_data_row], ignore_index=True)
+    record_data.to_csv(records_file_path_save, index=False)
+    print("Successfully written training records to %s" % (records_file_path_save))
+    return record_data
+
 # Predict model
 def predict_model(model, X):
     y_predicted = model.predict(X)
@@ -382,14 +417,6 @@ def train_model(model, train_dataset, validate_dataset, parameters):
 def infer_score(model, images):
     scores = predict_model(model, np.array(images))
     return scores
-
-# Display test prediction
-def display_test_prediction(file_id, predicted_landmark_id, probability, dataset_dir, training_data):
-    return
-    display("Image %s predicted landmark %s with probability %f" % (file_id, predicted_landmark_id, probability))
-    display(show_image(load_image_file(file_id, os.path.join(dataset_dir, "test"), target_size=(200,200), to_array=True)))
-    plot_images_by_landmark_id(predicted_landmark_id, root_dir=os.path.join(dataset_dir, "train"), training_data=training_data, slice_indexes=(None,25))
-    display(training_data[training_data["landmark_id"] == predicted_landmark_id])
 
 # Predict
 def predict(model, image, label=None, true_score=None, delta_max=10, debug=False):
