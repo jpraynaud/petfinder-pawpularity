@@ -318,15 +318,17 @@ def load_model(model, model_load_dir):
 
 # Synchronize models
 def synchronize_models(model_load_dir, model_save_dir):
-    if model_load_dir != model_load_dir:
+    synchronize_models = []
+    if model_load_dir != model_save_dir:
         for root, dirs, files in os.walk(model_load_dir, topdown=True):
             for file_name in files:
                 file_id, file_ext = os.path.splitext(file_name)
                 if file_ext in [".h5", ".csv"]:
                     file_src_path = os.path.join(model_load_dir, file_name)
                     file_dst_path = os.path.join(model_save_dir, file_name)
-                    print("Copied model %s from %s to %s" % (file_name, model_load_dir, model_save_dir))
                     shutil.copy(file_src_path, file_dst_path)
+                    synchronize_models.append(file_name)
+    return synchronize_models
 
 # Evaluate model
 def evaluate_model(model, test_dataset):
@@ -367,17 +369,19 @@ def setup_model(parameters):
     output_size = parameters["output_size"]
     preload_weights = parameters["preload_weights"]
     dropout_rate = parameters["dropout_rate"]
+    fine_tuning = parameters["fine_tuning"] if "fine_tuning" in parameters.keys() else False
     base_model =  keras.applications.xception.Xception(
         weights=preload_weights,
         input_shape=input_shape,
         include_top=False,
     )
-    base_model.trainable = False
+    base_model.trainable = fine_tuning
     inputs = keras.layers.Input(shape=input_shape)
     outputs = keras.applications.xception.preprocess_input(inputs)
-    outputs = base_model(outputs, training=False)
+    outputs = base_model(outputs)
     outputs = keras.layers.GlobalAveragePooling2D()(outputs)
     outputs = keras.layers.Dropout(dropout_rate)(outputs)
+    outputs = keras.layers.Dense(int(100))(outputs)
     outputs = keras.layers.Dense(int(output_size))(outputs)
     model = keras.Model(name=model_name, inputs=inputs, outputs=outputs)
     model.summary()
