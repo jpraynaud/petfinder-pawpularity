@@ -288,7 +288,7 @@ def describe_training(history):
 
 # Get model name
 def get_model_name(parameters):
-    model_name = "%s-input-%s-dropout-%0.3f" % (parameters["model_prefix"], "x".join(map(str, parameters["input_shape"])), parameters["dropout_rate"])
+    model_name = "%s-input-%s-dense-%s-dropout-%0.3f" % (parameters["model_prefix"], "x".join(map(str, parameters["input_shape"])), "x".join(map(str, parameters["dense_layers"])), parameters["dropout_rate"])
     return model_name
     
 # Model file path load
@@ -326,6 +326,7 @@ def synchronize_models(model_load_dir, model_save_dir):
                 if file_ext in [".h5", ".csv"]:
                     file_src_path = os.path.join(model_load_dir, file_name)
                     file_dst_path = os.path.join(model_save_dir, file_name)
+                    os.makedirs(os.path.dirname(file_dst_path), exist_ok=True)
                     shutil.copy(file_src_path, file_dst_path)
                     synchronize_models.append(file_name)
     return synchronize_models
@@ -368,6 +369,7 @@ def setup_model(parameters):
     input_shape = parameters["input_shape"]
     output_size = parameters["output_size"]
     preload_weights = parameters["preload_weights"]
+    dense_layers = parameters["dense_layers"]
     dropout_rate = parameters["dropout_rate"]
     fine_tuning = parameters["fine_tuning"] if "fine_tuning" in parameters.keys() else False
     base_model =  keras.applications.xception.Xception(
@@ -376,13 +378,17 @@ def setup_model(parameters):
         include_top=False,
     )
     base_model.trainable = fine_tuning
-    inputs = keras.layers.Input(shape=input_shape)
+    inputs = keras.layers.Input(shape=input_shape, name="input")
     outputs = keras.applications.xception.preprocess_input(inputs)
     outputs = base_model(outputs)
     outputs = keras.layers.GlobalAveragePooling2D()(outputs)
-    outputs = keras.layers.Dropout(dropout_rate)(outputs)
-    outputs = keras.layers.Dense(int(100))(outputs)
-    outputs = keras.layers.Dense(int(output_size))(outputs)
+    top_model_layers_index = 0
+    for layer_width in dense_layers:
+        top_model_layers_index += 1
+        outputs = keras.layers.Dense(layer_width, name="dense_%i" % top_model_layers_index)(outputs)
+        outputs = keras.layers.Dropout(dropout_rate, name="dropout_%i" % top_model_layers_index)(outputs)
+    top_model_layers_index += 1
+    outputs = keras.layers.Dense(int(output_size), name="dense_%i" % top_model_layers_index)(outputs)
     model = keras.Model(name=model_name, inputs=inputs, outputs=outputs)
     model.summary()
     return model
@@ -458,6 +464,7 @@ def make_submission_file(dataset, model, submission_dir):
 def infer_submission_data(dataset, model, take=-1):
     submission_data = pd.DataFrame({}, columns=["Id", "Pawpularity"])
     if take == -1: take = dataset().cardinality().numpy()
+    take = min(take, dataset().cardinality().numpy())
     for batch_index in range(take):
         print("Preparing submission for batch %s/%s..." % (batch_index+1, take), end="\r", flush=True)
         batch_dataset = dataset(skip=batch_index).take(1)
