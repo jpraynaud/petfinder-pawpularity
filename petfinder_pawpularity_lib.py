@@ -182,7 +182,7 @@ def load_test_dataset(dataset_dir, batch_size=32, shuffle=False, seed=np.random.
     return dataset
 
 # Process image dataset function
-def process_image_func(mapping_data=None, image_size=(224, 224)):
+def process_image_func(mapping_data=None, image_size=(None, None)):
     feature_fields = ["Subject Focus", "Eyes", "Face", "Near", "Action", "Accessory", "Group", "Collage", "Human", "Occlusion", "Info", "Blur"]
     if mapping_data is not None:
         id_values = tf.convert_to_tensor(mapping_data["Id"].values)
@@ -210,7 +210,8 @@ def process_image_func(mapping_data=None, image_size=(224, 224)):
         image_string = tf.io.read_file(file_path)
         image = tf.image.decode_jpeg(image_string, channels=3)
         image = tf.image.convert_image_dtype(image, tf.float32)
-        image = tf.image.resize(image, np.asarray(image_size))
+        if image_size != (None, None):
+            image = tf.image.resize(image, np.asarray(image_size))
         image = image * 255.0
         score = 0
         features = ""
@@ -367,33 +368,62 @@ def predict_model(model, X):
 
 # Setup model
 def setup_model(parameters):
+    model_base = parameters["model_base"]
     model_name = parameters["model_name"]
     input_shape = parameters["input_shape"]
     output_size = parameters["output_size"]
     preload_weights = parameters["preload_weights"]
-    dense_layers = parameters["dense_layers"]
+    image_resize = [int(param) for param in parameters["image_resize"].split("x")] if "image_resize" in parameters.keys() else None
+    dense_layers = [int(param) for param in parameters["dense_layers"].split("x")] if "dense_layers" in parameters.keys() else []
     dropout_rate = parameters["dropout_rate"]
-    fine_tuning = parameters["fine_tuning"] if "fine_tuning" in parameters.keys() else False
     learning_rate = parameters["learning_rate"]
+    fine_tuning = parameters["fine_tuning"] if "fine_tuning" in parameters.keys() else False
     optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
     mse_loss = keras.losses.MeanSquaredError(reduction="auto", name="mse")
     rmse_metric = keras.metrics.RootMeanSquaredError(name="rmse", dtype=None)
-    base_model =  keras.applications.xception.Xception(
-        weights=preload_weights,
-        input_shape=input_shape,
-        include_top=False,
-    )
-    base_model.trainable = fine_tuning
     inputs = keras.layers.Input(shape=input_shape, name="input")
-    outputs = keras.applications.xception.preprocess_input(inputs)
-    outputs = base_model(outputs)
+    if image_resize is not None:
+        outputs = keras.layers.Resizing(height=image_resize[1], width=image_resize[0])(inputs)
+    else:
+        outputs = inputs
+    if model_base == "xception":
+        model_base_layer =  keras.applications.xception.Xception(
+            weights=preload_weights,
+            input_shape=input_shape,
+            include_top=False,
+        )
+        outputs = keras.applications.xception.preprocess_input(outputs)
+    elif model_base == "efficientnetb3":
+        model_base_layer =  keras.applications.EfficientNetB3(
+            weights=preload_weights,
+            input_shape=input_shape,
+            include_top=False,
+        )
+    elif model_base == "efficientnetb5":
+        model_base_layer =  keras.applications.EfficientNetB5(
+            weights=preload_weights,
+            input_shape=input_shape,
+            include_top=False,
+        )
+    elif model_base == "efficientnetb7":
+        model_base_layer =  keras.applications.EfficientNetB7(
+            weights=preload_weights,
+            input_shape=input_shape,
+            include_top=False,
+        )
+    model_base_layer.trainable = fine_tuning    
+    outputs = model_base_layer(outputs)
     outputs = keras.layers.GlobalAveragePooling2D()(outputs)
     top_model_layers_index = 0
     for layer_width in dense_layers:
-        top_model_layers_index += 1
-        outputs = keras.layers.Dense(layer_width, name="dense_%i" % top_model_layers_index)(outputs)
-        outputs = keras.layers.Dropout(dropout_rate, name="dropout_%i" % top_model_layers_index)(outputs)
+        if layer_width > 0:
+            top_model_layers_index += 1
+            outputs = keras.layers.Dense(layer_width, name="dense_%i" % top_model_layers_index)(outputs)
+            if dropout_rate > 0:
+                outputs = keras.layers.Dropout(dropout_rate, name="dropout_%i" % top_model_layers_index)(outputs)
     top_model_layers_index += 1
+    if len(dense_layers) == 0 and dropout_rate > 0:
+        outputs = keras.layers.Dropout(dropout_rate, name="dropout_%i" % top_model_layers_index)(outputs)
     outputs = keras.layers.Dense(int(output_size), name="dense_%i" % top_model_layers_index)(outputs)
     model = keras.Model(name=model_name, inputs=inputs, outputs=outputs)
     model.compile(optimizer=optimizer, loss=[mse_loss], metrics=[rmse_metric])
@@ -426,7 +456,8 @@ def train_model(model, train_dataset, validate_dataset, parameters):
     return history
 
 # Tune model
-def tune_model(hypermodel, project_name, settings, train_dataset, validate_dataset):
+def tune_model(hypermodel, settings, train_dataset, validate_dataset):
+    project_name = settings["tuner_project_name"]
     tuner_type = settings["tuner_type"]
     objective = kt.Objective("val_rmse", direction="min")
     max_trials = settings["tuner_max_trials"]
