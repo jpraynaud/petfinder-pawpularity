@@ -20,6 +20,8 @@ import pandas as pd
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
+import keras_tuner as kt
+
 
 # TF strategy
 def tf_strategy():
@@ -363,7 +365,7 @@ def predict_model(model, X):
     y_predicted = model.predict(X)
     return y_predicted
 
-# Setup mode
+# Setup model
 def setup_model(parameters):
     model_name = parameters["model_name"]
     input_shape = parameters["input_shape"]
@@ -372,6 +374,10 @@ def setup_model(parameters):
     dense_layers = parameters["dense_layers"]
     dropout_rate = parameters["dropout_rate"]
     fine_tuning = parameters["fine_tuning"] if "fine_tuning" in parameters.keys() else False
+    learning_rate = parameters["learning_rate"]
+    optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
+    mse_loss = keras.losses.MeanSquaredError(reduction="auto", name="mse")
+    rmse_metric = keras.metrics.RootMeanSquaredError(name="rmse", dtype=None)
     base_model =  keras.applications.xception.Xception(
         weights=preload_weights,
         input_shape=input_shape,
@@ -390,19 +396,15 @@ def setup_model(parameters):
     top_model_layers_index += 1
     outputs = keras.layers.Dense(int(output_size), name="dense_%i" % top_model_layers_index)(outputs)
     model = keras.Model(name=model_name, inputs=inputs, outputs=outputs)
+    model.compile(optimizer=optimizer, loss=[mse_loss], metrics=[rmse_metric])
     model.summary()
     return model
 
 # Train model
 def train_model(model, train_dataset, validate_dataset, parameters):
-    learning_rate = parameters["learning_rate"]
     early_stopping_patience = parameters["early_stopping_patience"]
     save_checkpoint = parameters["save_checkpoint"]
     epochs = parameters["epoch"]
-    optimizer = keras.optimizers.Adam(learning_rate=learning_rate)
-    mse_loss = keras.losses.MeanSquaredError(reduction="auto", name="mse")
-    rmse_metric = keras.metrics.RootMeanSquaredError(name="rmse", dtype=None)
-    model.compile(optimizer=optimizer, loss=[mse_loss], metrics=[rmse_metric])
     callbacks = []
     if save_checkpoint:
         model_file_path = model_file_path_save(model.name)
@@ -422,6 +424,71 @@ def train_model(model, train_dataset, validate_dataset, parameters):
         verbose=1,
     )
     return history
+
+# Tune model
+def tune_model(hypermodel, project_name, settings, train_dataset, validate_dataset):
+    tuner_type = settings["tuner_type"]
+    objective = kt.Objective("val_rmse", direction="min")
+    max_trials = settings["tuner_max_trials"]
+    executions_per_trial = settings["tuner_executions_per_trial"]
+    seed = settings["tuner_seed"]
+    directory = settings["tuner_save_dir"]
+    max_epochs = settings["tuner_max_epochs"]
+    tune_new_entries = True
+    allow_new_entries = True
+    overwrite = True
+    if tuner_type == "random":
+        tuner = kt.RandomSearch(
+            hypermodel,
+            objective=objective,
+            max_trials=max_trials,
+            executions_per_trial=executions_per_trial,
+            overwrite=overwrite,
+            seed=seed,
+            directory=directory,
+            project_name=project_name,
+            tune_new_entries=tune_new_entries,
+            allow_new_entries=allow_new_entries,
+        )
+    elif tuner_type == "bayesian":
+        bayesian_num_initial_points = settings["tuner_bayesian_num_initial_points"] if "tuner_bayesian_num_initial_points" in settings.keys() else 2
+        bayesian_alpha = settings["tuner_bayesian_alpha"] if "tuner_bayesian_alpha" in settings.keys() else 0.0001
+        bayesian_beta = settings["tuner_bayesian_beta"] if "tuner_bayesian_beta" in settings.keys() else 2.6
+        tuner = kt.BayesianOptimization(
+            hypermodel,
+            objective=objective,
+            max_trials=max_trials,
+            num_initial_points=bayesian_num_initial_points,
+            alpha=bayesian_alpha,
+            beta=bayesian_beta,
+            overwrite=overwrite,
+            seed=seed,
+            directory=directory,
+            project_name=project_name,
+            tune_new_entries=tune_new_entries,
+            allow_new_entries=allow_new_entries,
+        )
+    elif tuner_type == "hyperband":
+        hyperband_factor = settings["tuner_hyperband_factor"] if "tuner_hyperband_factor" in settings.keys() else 3
+        hyperband_iterations = settings["tuner_hyperband_iterations"] if "tuner_hyperband_iterations" in settings.keys() else 1
+        tuner = kt.Hyperband(
+            hypermodel,
+            objective=objective,
+            max_epochs=max_epochs,
+            factor=hyperband_factor,
+            hyperband_iterations=hyperband_iterations,
+            overwrite=overwrite,
+            seed=seed,
+            directory=directory,
+            project_name=project_name,
+            tune_new_entries=tune_new_entries,
+            allow_new_entries=allow_new_entries,
+        )
+    tuner.search_space_summary()
+    tuner.search(train_dataset(), epochs=max_epochs, validation_data=validate_dataset())
+    tuner.results_summary()
+    return tuner
+
 
 # Infer score
 def infer_score(model, images):
