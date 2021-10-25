@@ -291,7 +291,7 @@ def describe_training(history):
 
 # Get model name
 def get_model_name(parameters):
-    model_name = "%s-input-%s-dense-%s-dropout-%0.3f" % (parameters["model_prefix"], "x".join(map(str, parameters["input_shape"])), "x".join(map(str, parameters["dense_layers"])), parameters["dropout_rate"])
+    model_name = "%s-input-%s-dense-%s-dropout-%0.3f" % (parameters["model_prefix"], "x".join(map(str, parameters["input_shape"])), parameters["dense_layers"], parameters["dropout_rate"])
     return model_name
     
 # Model file path load
@@ -418,12 +418,12 @@ def setup_model(parameters):
     for layer_width in dense_layers:
         if layer_width > 0:
             top_model_layers_index += 1
-            outputs = keras.layers.Dense(layer_width, name="dense_%i" % top_model_layers_index)(outputs)
+            outputs = keras.layers.Dense(layer_width, name="dense_%i" % (top_model_layers_index))(outputs)
             if dropout_rate > 0:
-                outputs = keras.layers.Dropout(dropout_rate, name="dropout_%i" % top_model_layers_index)(outputs)
+                outputs = keras.layers.Dropout(dropout_rate, name="dropout_%i_r%0.3f" % (top_model_layers_index, dropout_rate))(outputs)
     top_model_layers_index += 1
-    if len(dense_layers) == 0 and dropout_rate > 0:
-        outputs = keras.layers.Dropout(dropout_rate, name="dropout_%i" % top_model_layers_index)(outputs)
+    if top_model_layers_index == 1 and dropout_rate > 0:
+        outputs = keras.layers.Dropout(dropout_rate, name="dropout_%i_r%0.3f" % (top_model_layers_index, dropout_rate))(outputs)
     outputs = keras.layers.Dense(int(output_size), name="dense_%i" % top_model_layers_index)(outputs)
     model = keras.Model(name=model_name, inputs=inputs, outputs=outputs)
     model.compile(optimizer=optimizer, loss=[mse_loss], metrics=[rmse_metric])
