@@ -291,7 +291,7 @@ def describe_training(history):
 
 # Get model name
 def get_model_name(parameters):
-    model_name = "%s-input-%s-dense-%s-dropout-%0.3f" % (parameters["model_prefix"], "x".join(map(str, parameters["input_shape"])), parameters["dense_layers"], parameters["dropout_rate"])
+    model_name = "%s-%s-input-%s-dense-%s-dropout-%0.3f" % (parameters["model_prefix"], parameters["model_base"], "x".join(map(str, parameters["input_shape"])), parameters["dense_layers"], parameters["dropout_rate"])
     return model_name
     
 # Model file path load
