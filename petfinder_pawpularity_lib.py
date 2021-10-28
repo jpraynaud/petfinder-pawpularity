@@ -22,6 +22,8 @@ from tensorflow import keras
 from tensorflow.keras import layers
 import keras_tuner as kt
 
+# Feature fields
+feature_fields = ["Subject Focus", "Eyes", "Face", "Near", "Action", "Accessory", "Group", "Collage", "Human", "Occlusion", "Info", "Blur"]
 
 # TF strategy
 def tf_strategy():
@@ -171,9 +173,10 @@ def load_training_dataset(dataset_dir, mapping_data, batch_size=32, shuffle=Fals
     return dataset
 
 # Load test dataset
-def load_test_dataset(dataset_dir, batch_size=32, shuffle=False, seed=np.random.seed(42), image_size=(224, 224)):
+def load_test_dataset(dataset_dir, mapping_data, batch_size=32, shuffle=False, seed=np.random.seed(42), image_size=(224, 224)):
     dataset = load_image_dataset(
         pattern=dataset_dir+"/test/*.jpg",
+        mapping_data=mapping_data,
         batch_size=batch_size,
         image_size=image_size,
         shuffle=shuffle,
@@ -183,10 +186,11 @@ def load_test_dataset(dataset_dir, batch_size=32, shuffle=False, seed=np.random.
 
 # Process image dataset function
 def process_image_func(mapping_data=None, image_size=(None, None)):
-    feature_fields = ["Subject Focus", "Eyes", "Face", "Near", "Action", "Accessory", "Group", "Collage", "Human", "Occlusion", "Info", "Blur"]
     if mapping_data is not None:
         id_values = tf.convert_to_tensor(mapping_data["Id"].values)
-        score_values = tf.convert_to_tensor(mapping_data["Pawpularity"].values)
+        score_values = [0] * len(mapping_data["Id"].values)
+        if "Pawpularity" in mapping_data.columns:
+            score_values = tf.convert_to_tensor(mapping_data["Pawpularity"].values)
         scores_initializer = tf.lookup.KeyValueTensorInitializer(
             keys=id_values,
             values=score_values,
@@ -214,11 +218,12 @@ def process_image_func(mapping_data=None, image_size=(None, None)):
             image = tf.image.resize(image, np.asarray(image_size))
         image = image * 255.0
         score = 0
-        features = ""
+        features_ts = [] * len(feature_fields)
         if mapping_data is not None:
             score = scores_table.lookup(file_id)
             features = features_table.lookup(file_id)
-        return image, features, score, file_id
+            features_ts = tf.map_fn(fn=lambda x: tf.strings.to_number(x), elems=tf.strings.split(features, ","), fn_output_signature=tf.float32)
+        return image, features_ts, score, file_id
     return _process_image_file_path
 
 # Load image dataset
@@ -283,6 +288,13 @@ def load_training_data(dataset_dir, csv_file="train.csv"):
     training_data = pd.read_csv(csv_file_path)
     return training_data
 
+# Load test data
+def load_test_data(dataset_dir, csv_file="test.csv"):
+    csv_file_path = os.path.join(dataset_dir, csv_file)
+    display("Load test data from %s" % csv_file_path)
+    test_data = pd.read_csv(csv_file_path)
+    return test_data
+
 # Describe training
 def describe_training(history):
     pd.DataFrame(history.history).plot(figsize=(11, 4))
@@ -319,6 +331,10 @@ def load_model(model, model_load_dir):
     model.load_weights(model_file)
     return model_file
 
+# Show model
+def show_model(model, model_save_dir):
+    display(keras.utils.plot_model(model, os.path.join(model_save_dir, "%s.png" % (model.name)), show_shapes=True, expand_nested=False, dpi=192))
+    
 # Synchronize models
 def synchronize_models(model_load_dir, model_save_dir):
     synchronize_models = []
@@ -337,7 +353,8 @@ def synchronize_models(model_load_dir, model_save_dir):
 # Evaluate model
 def evaluate_model(model, test_dataset):
     if test_dataset.cardinality().numpy() > 0:
-        return model.evaluate(test_dataset, verbose=1)
+        test_data = test_dataset.map(prepare_model_dataset_fn())
+        return model.evaluate(test_data, verbose=1)
     return None
     
 # Record training/evaluate model
@@ -361,8 +378,13 @@ def record_training_evaluate(model_name, model_file, model_parameters, history, 
     print("Successfully written training records to %s" % (records_file_path_save))
     return record_data
 
+# Prepare model dataset function
+def prepare_model_dataset_fn():
+    return lambda image, features, score, file_id: ({"input": image, "input_features": features}, score)
+
 # Predict model
-def predict_model(model, X):
+def predict_model(model, images, features):
+    X = prepare_model_dataset_fn()(images, features, None, None)[0]
     y_predicted = model.predict(X)
     return y_predicted
 
@@ -371,6 +393,7 @@ def setup_model(parameters):
     model_base = parameters["model_base"]
     model_name = parameters["model_name"]
     input_shape = parameters["input_shape"]
+    input_shape_features = parameters["input_shape_features"]
     output_size = parameters["output_size"]
     preload_weights = parameters["preload_weights"]
     image_resize = [int(param) for param in parameters["image_resize"].split("x")] if "image_resize" in parameters.keys() else None
@@ -382,6 +405,7 @@ def setup_model(parameters):
     mse_loss = keras.losses.MeanSquaredError(reduction="auto", name="mse")
     rmse_metric = keras.metrics.RootMeanSquaredError(name="rmse", dtype=None)
     inputs = keras.layers.Input(shape=input_shape, name="input")
+    inputs_features = keras.layers.Input(shape=input_shape_features, name="input_features")
     if image_resize is not None:
         outputs = keras.layers.Resizing(height=image_resize[1], width=image_resize[0])(inputs)
     else:
@@ -414,18 +438,19 @@ def setup_model(parameters):
     model_base_layer.trainable = fine_tuning    
     outputs = model_base_layer(outputs)
     outputs = keras.layers.GlobalAveragePooling2D()(outputs)
+    outputs = keras.layers.concatenate([outputs, inputs_features])
     top_model_layers_index = 0
     for layer_width in dense_layers:
         if layer_width > 0:
             top_model_layers_index += 1
-            outputs = keras.layers.Dense(layer_width, name="dense_%i" % (top_model_layers_index))(outputs)
             if dropout_rate > 0:
                 outputs = keras.layers.Dropout(dropout_rate, name="dropout_%i_r%0.3f" % (top_model_layers_index, dropout_rate))(outputs)
+            outputs = keras.layers.Dense(layer_width, name="dense_%i" % (top_model_layers_index))(outputs)
     top_model_layers_index += 1
     if top_model_layers_index == 1 and dropout_rate > 0:
         outputs = keras.layers.Dropout(dropout_rate, name="dropout_%i_r%0.3f" % (top_model_layers_index, dropout_rate))(outputs)
     outputs = keras.layers.Dense(int(output_size), name="dense_%i" % top_model_layers_index)(outputs)
-    model = keras.Model(name=model_name, inputs=inputs, outputs=outputs)
+    model = keras.Model(name=model_name, inputs=[inputs, inputs_features], outputs=outputs)
     model.compile(optimizer=optimizer, loss=[mse_loss], metrics=[rmse_metric])
     model.summary()
     return model
@@ -435,6 +460,10 @@ def train_model(model, train_dataset, validate_dataset, parameters):
     early_stopping_patience = parameters["early_stopping_patience"]
     save_checkpoint = parameters["save_checkpoint"]
     epochs = parameters["epoch"]
+    train_data = train_dataset.map(prepare_model_dataset_fn())
+    validation_data = None
+    if validate_dataset.cardinality().numpy() > 0:
+        validation_data = validate_dataset.map(prepare_model_dataset_fn())
     callbacks = []
     if save_checkpoint:
         model_file_path = model_file_path_save(model.name)
@@ -445,9 +474,8 @@ def train_model(model, train_dataset, validate_dataset, parameters):
     if early_stopping_patience > 0 and early_stopping_patience < epochs:
         early_stopping = keras.callbacks.EarlyStopping(patience=early_stopping_patience, restore_best_weights=True)
         callbacks.append(early_stopping)
-    validation_data = validate_dataset if validate_dataset.cardinality().numpy() > 0 else None
     history = model.fit(
-        train_dataset,
+        train_data,
         validation_data=validation_data,
         epochs=epochs,
         callbacks=callbacks,
@@ -516,19 +544,21 @@ def tune_model(hypermodel, settings, train_dataset, validate_dataset):
             allow_new_entries=allow_new_entries,
         )
     tuner.search_space_summary()
-    tuner.search(train_dataset(), epochs=max_epochs, validation_data=validate_dataset())
+    train_data = train_dataset().map(prepare_model_dataset_fn())
+    validation_data = validate_dataset().map(prepare_model_dataset_fn())
+    tuner.search(train_data, epochs=max_epochs, validation_data=validation_data)
     tuner.results_summary()
     return tuner
 
 
 # Infer score
-def infer_score(model, images):
-    scores = predict_model(model, np.array(images))
+def infer_score(model, images, features):
+    scores = predict_model(model, np.array(images), np.array(features))
     return scores
 
 # Predict
-def predict(model, image, label=None, true_score=None, delta_max=10, debug=False):
-    predicted_scores = infer_score(model, [image])
+def predict(model, image, features, label=None, true_score=None, delta_max=10, debug=False):
+    predicted_scores = infer_score(model, [image], [features])
     predicted_score = int(predicted_scores[0][0])
     if true_score is not None:
         result = "SUCCESS" if abs(predicted_score - true_score) <= delta_max else "FAILURE"
@@ -566,8 +596,8 @@ def infer_submission_data(dataset, model, take=-1):
     for batch_index in range(take):
         print("Preparing submission for batch %s/%s..." % (batch_index+1, take), end="\r", flush=True)
         batch_dataset = dataset(skip=batch_index).take(1)
-        images, _, file_ids, *_ = load_images_scores_from_dataset(batch_dataset)
-        predicted_scores = infer_score(model, images)
+        images, features, _, file_ids, *_ = load_images_scores_from_dataset(batch_dataset)
+        predicted_scores = infer_score(model, images, features)
         for image_index in range(len(images)):
             predicted_score = "%0.2f" % predicted_scores[image_index][0]
             query_id = file_ids[image_index].decode("utf-8")
