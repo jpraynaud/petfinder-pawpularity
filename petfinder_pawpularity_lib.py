@@ -161,7 +161,7 @@ def cut_training_data(cut_ratio=1.0, dataset_dir_src=None, dataset_dir_cut=None)
     return dataset_dir_cut
 
 # Load training dataset
-def load_training_dataset(dataset_dir, mapping_data, batch_size=32, shuffle=False, seed=np.random.seed(42), image_size=(224, 224)):
+def load_training_dataset(dataset_dir, mapping_data, batch_size=32, shuffle=False, seed=42, image_size=(224, 224)):
     dataset = load_image_dataset(
         pattern=dataset_dir+"/train/*.jpg",
         mapping_data=mapping_data,
@@ -173,7 +173,7 @@ def load_training_dataset(dataset_dir, mapping_data, batch_size=32, shuffle=Fals
     return dataset
 
 # Load test dataset
-def load_test_dataset(dataset_dir, mapping_data, batch_size=32, shuffle=False, seed=np.random.seed(42), image_size=(224, 224)):
+def load_test_dataset(dataset_dir, mapping_data, batch_size=32, shuffle=False, seed=42, image_size=(224, 224)):
     dataset = load_image_dataset(
         pattern=dataset_dir+"/test/*.jpg",
         mapping_data=mapping_data,
@@ -227,7 +227,7 @@ def process_image_func(mapping_data=None, image_size=(None, None)):
     return _process_image_file_path
 
 # Load image dataset
-def load_image_dataset(pattern="*.jpg", mapping_data=None, batch_size=32, shuffle=False, seed=np.random.seed(42), image_size=(224, 224), num_parallel_calls=tf.data.AUTOTUNE):
+def load_image_dataset(pattern="*.jpg", mapping_data=None, batch_size=32, shuffle=False, seed=42, image_size=(224, 224), num_parallel_calls=tf.data.AUTOTUNE):
     def _get_image_dataset(skip=0):
         dataset = tf.data.Dataset.list_files(pattern, shuffle=shuffle, seed=seed)
         dataset = dataset.cache()
@@ -380,7 +380,7 @@ def record_training_evaluate(model_name, model_file, model_parameters, history, 
 
 # Prepare model dataset function
 def prepare_model_dataset_fn():
-    return lambda image, features, score, file_id: ({"input": image, "input_features": features}, score)
+    return lambda image, features, score, file_id: ({"input": image, "input_features": features}, tf.cast(score, dtype=tf.float32) if score is not None else None)
 
 # Predict model
 def predict_model(model, images, features):
@@ -398,6 +398,7 @@ def setup_model(parameters):
     preload_weights = parameters["preload_weights"]
     image_resize = [int(param) for param in parameters["image_resize"].split("x")] if "image_resize" in parameters.keys() else None
     dense_layers = [int(param) for param in parameters["dense_layers"].split("x")] if "dense_layers" in parameters.keys() else []
+    dense_layers_activation = parameters["dense_layers_activation"]
     dropout_rate = parameters["dropout_rate"]
     learning_rate = parameters["learning_rate"]
     fine_tuning = parameters["fine_tuning"] if "fine_tuning" in parameters.keys() else False
@@ -432,24 +433,27 @@ def setup_model(parameters):
     elif model_base == "efficientnetb7":
         model_base_layer =  keras.applications.EfficientNetB7(
             weights=preload_weights,
-            input_shape=input_shape,
+            input_shape=input_shape,    
             include_top=False,
         )
     model_base_layer.trainable = fine_tuning    
     outputs = model_base_layer(outputs)
     outputs = keras.layers.GlobalAveragePooling2D()(outputs)
+    outputs = keras.layers.Dense(int(input_shape_features), activation=dense_layers_activation, name="dense_main")(outputs)
     outputs = keras.layers.concatenate([outputs, inputs_features])
+    outputs = keras.layers.BatchNormalization()(outputs)
     top_model_layers_index = 0
     for layer_width in dense_layers:
         if layer_width > 0:
             top_model_layers_index += 1
             if dropout_rate > 0:
                 outputs = keras.layers.Dropout(dropout_rate, name="dropout_%i_r%0.3f" % (top_model_layers_index, dropout_rate))(outputs)
-            outputs = keras.layers.Dense(layer_width, name="dense_%i" % (top_model_layers_index))(outputs)
+            outputs = keras.layers.Dense(layer_width, activation=dense_layers_activation, name="dense_%i" % (top_model_layers_index))(outputs)
     top_model_layers_index += 1
     if top_model_layers_index == 1 and dropout_rate > 0:
         outputs = keras.layers.Dropout(dropout_rate, name="dropout_%i_r%0.3f" % (top_model_layers_index, dropout_rate))(outputs)
-    outputs = keras.layers.Dense(int(output_size), name="dense_%i" % top_model_layers_index)(outputs)
+    outputs = keras.layers.Dense(int(output_size), activation="sigmoid", name="dense_%i" % top_model_layers_index)(outputs)
+    outputs = keras.layers.Rescaling(100.0, offset=0.0)(outputs)
     model = keras.Model(name=model_name, inputs=[inputs, inputs_features], outputs=outputs)
     model.compile(optimizer=optimizer, loss=[mse_loss], metrics=[rmse_metric])
     model.summary()
