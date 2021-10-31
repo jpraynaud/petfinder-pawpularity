@@ -42,6 +42,15 @@ def tf_strategy():
 
     return tf_strategy
 
+# Show dict
+def show_dict(dict):
+    columns = ["Setting", "Value"]
+    dict_data = pd.DataFrame({}, columns=columns)
+    for k in dict.keys():
+        dict_data_row = pd.DataFrame([[k, dict[k]]], columns=columns)
+        dict_data = pd.concat([dict_data, dict_data_row], ignore_index=True)
+    display(dict_data)
+
 # Load image file
 def load_image_file(image_file, root_dir, target_size, to_array=True):
     image_file = "%s.jpg" % image_file
@@ -139,6 +148,11 @@ def cut_training_data(cut_ratio=1.0, dataset_dir_src=None, dataset_dir_cut=None)
     training_data_cut = training_data.iloc[0:index_cut_training, :]
     os.makedirs(dataset_dir_cut, exist_ok=True)
     training_data_cut.to_csv(os.path.join(dataset_dir_cut, "train.csv"), index=False)
+    test_data = pd.read_csv(os.path.join(dataset_dir_src, "test.csv"))
+    index_cut_test = int(len(test_data) * cut_ratio)
+    test_data_cut = test_data.iloc[0:index_cut_test, :]
+    os.makedirs(dataset_dir_cut, exist_ok=True)
+    test_data_cut.to_csv(os.path.join(dataset_dir_cut, "test.csv"), index=False)
     for file_id in training_data_cut["Id"]:
         file_name = prefix_file_name("%s.jpg" % file_id)
         file_path_src = os.path.join(dataset_dir_src, "train", file_name)

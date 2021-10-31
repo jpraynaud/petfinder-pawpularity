@@ -1,0 +1,7 @@
+{
+    "env": "local",
+    "mode_train": "cut",
+    "mode_predict": "cut",
+    "mode_submit": "full",
+    "mode_tune": "cut"
+}
