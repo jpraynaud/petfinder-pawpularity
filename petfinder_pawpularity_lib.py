@@ -44,7 +44,7 @@ def tf_strategy():
 
 # Show dict
 def show_dict(dict):
-    columns = ["Setting", "Value"]
+    columns = ["Key", "Value"]
     dict_data = pd.DataFrame({}, columns=columns)
     for k in dict.keys():
         dict_data_row = pd.DataFrame([[k, dict[k]]], columns=columns)
@@ -317,7 +317,7 @@ def describe_training(history):
 
 # Get model name
 def get_model_name(parameters):
-    model_name = "%s-%s-input-%s-dense-%s-dropout-%0.3f" % (parameters["model_prefix"], parameters["model_base"], "x".join(map(str, parameters["input_shape"])), parameters["dense_layers"], parameters["dropout_rate"])
+    model_name = "%s%s-%s-input-%s-dense-%s-%s-dropout-%0.3f" % (parameters["model_id"], parameters["model_prefix"], parameters["model_base"], "x".join(map(str, parameters["input_shape"])), parameters["dense_layers"], parameters["dense_layers_activation"], parameters["dropout_rate"])
     return model_name
     
 # Model file path load
@@ -453,7 +453,6 @@ def setup_model(parameters):
     model_base_layer.trainable = fine_tuning    
     outputs = model_base_layer(outputs)
     outputs = keras.layers.GlobalAveragePooling2D()(outputs)
-    outputs = keras.layers.Dense(int(input_shape_features), activation=dense_layers_activation, name="dense_main")(outputs)
     outputs = keras.layers.concatenate([outputs, inputs_features])
     outputs = keras.layers.BatchNormalization()(outputs)
     top_model_layers_index = 0

@@ -51,7 +51,7 @@ def get_settings_map():
         "dataset_image_size": (750, 750),
         "dataset_cut_ratio": 1.0,
         "dataset_shrink_ratio": 1.0,
-        "dataset_split_ratios": [0.90, 0.05, 0.05],
+        "dataset_split_ratios": [0.80, 0.10, 0.10],
         "dataset_shuffle": False,
         "dataset_shuffle_seed": 42,
         "dataset_prefetch": tf.data.AUTOTUNE,
@@ -70,6 +70,8 @@ def get_settings_map():
         **settingsMap["remote-train-full"],
         **{
             "model_load_dir": os.path.join("..", "input", "petfinder-pawpularity-empty", "models"),
+            "train_max_epochs": 1,
+            "train_early_stopping": 1,
         }
     }
 
@@ -78,7 +80,7 @@ def get_settings_map():
         **settingsMap["remote-train-full"],
         **{
             "dataset_cut_ratio": 0.2,
-            "dataset_split_ratios": [0.7, 0.20, 0.1],
+            "dataset_split_ratios": [0.7, 0.20, 0.10],
             "train_max_epochs": 10,
             "train_early_stopping": 5,
         }
