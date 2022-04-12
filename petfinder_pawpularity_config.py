@@ -109,7 +109,7 @@ def get_settings_map():
             "dataset_batch_size": 64,
             "dataset_image_size": (150, 150),
             "dataset_split_ratios": [0.7, 0.2, 0.1],
-            "train_max_epochs": 1,
+            "train_max_epochs": 25,
             "train_early_stopping": 3,
             "cleanup_data_flag": False,
         }
