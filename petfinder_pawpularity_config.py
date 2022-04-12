@@ -6,24 +6,33 @@ import pandas as pd
 import tensorflow as tf
 
 # Get config
+
+
 def get_config(default_config={"env": "remote"}):
     config_file = "./config.txt"
     config = default_config
     if os.path.exists(config_file):
-        with open(config_file) as f: config = json.loads(f.read())
+        with open(config_file) as f:
+            config = json.loads(f.read())
     return config
 
 # Get environment
+
+
 def get_env(config=get_config()):
     return config["env"]
 
 # Get mode
+
+
 def get_mode(process, fallback_mode, config=get_config()):
     mode_key = "mode_%s" % process
     mode = config[mode_key] if mode_key in config.keys() else fallback_mode
     return mode
 
 # Get settings
+
+
 def get_settings(process, fallback_mode):
     config = get_config()
     env = get_env(config)
@@ -35,10 +44,12 @@ def get_settings(process, fallback_mode):
     return settings, debug
 
 # Get settings map
+
+
 def get_settings_map():
     settingsMap = {}
 
-    ## Train
+    # Train
     # remote-train-full
     settingsMap["remote-train-full"] = {
         "debug": False,
@@ -114,7 +125,7 @@ def get_settings_map():
         }
     }
 
-    ## Predict
+    # Predict
     # remote-predict-full
     settingsMap["remote-predict-full"] = {
         **settingsMap["remote-train-full"],
@@ -165,7 +176,7 @@ def get_settings_map():
         }
     }
 
-    ## Submit
+    # Submit
     # remote-submit-full
     settingsMap["remote-submit-full"] = {
         **settingsMap["remote-train-full"],
@@ -210,7 +221,7 @@ def get_settings_map():
         }
     }
 
-     # local-submit-full
+    # local-submit-full
     settingsMap["local-submit-full"] = {
         **settingsMap["local-train-full"],
         **{
@@ -243,7 +254,7 @@ def get_settings_map():
         }
     }
 
-    ## Tuner
+    # Tuner
     # remote-tune-full
     settingsMap["remote-tune-full"] = {
         **settingsMap["remote-train-full"],
